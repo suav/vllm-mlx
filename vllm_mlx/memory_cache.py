@@ -635,23 +635,29 @@ class MemoryAwarePrefixCache:
                 f"layer_types={[type(lc).__name__ for lc in best_lcp_entry.cache[:3]]}"
             )
 
-            if not has_non_trimmable:
-                trimmed_cache = _trim_cache_offset(best_lcp_entry.cache, excess)
-                self._entries.move_to_end(best_lcp_entry.tokens)
-                self._stats.hits += 1
-                self._stats.tokens_saved += best_lcp_length
-                remaining = tokens[best_lcp_length:]
-                logger.debug(
-                    f"[cache_fetch] LCP hit: shared={best_lcp_length} "
-                    f"trimmed={excess} remaining={len(remaining)}"
-                )
-                self._last_match_type = "lcp"
-                trimmed_cache = (
-                    _dequantize_cache(trimmed_cache)
-                    if self._config.kv_quantize
-                    else trimmed_cache
-                )
-                return trimmed_cache, remaining
+            # _trim_cache_offset handles mixed layer types: it adjusts
+            # offset on trimmable layers (KVCache/QuantizedKVCache) and
+            # passes non-trimmable layers through unchanged. The remaining
+            # tokens are reprocessed in the forward pass, which updates
+            # all layer types including non-trimmable ones. This is safe
+            # for LCP matches (unlike supersequence) because the caller
+            # will reprocess the divergent suffix.
+            trimmed_cache = _trim_cache_offset(best_lcp_entry.cache, excess)
+            self._entries.move_to_end(best_lcp_entry.tokens)
+            self._stats.hits += 1
+            self._stats.tokens_saved += best_lcp_length
+            remaining = tokens[best_lcp_length:]
+            logger.debug(
+                f"[cache_fetch] LCP hit: shared={best_lcp_length} "
+                f"trimmed={excess} remaining={len(remaining)}"
+            )
+            self._last_match_type = "lcp"
+            trimmed_cache = (
+                _dequantize_cache(trimmed_cache)
+                if self._config.kv_quantize
+                else trimmed_cache
+            )
+            return trimmed_cache, remaining
 
         self._stats.misses += 1
         self._last_match_type = "miss"
